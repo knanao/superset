@@ -35,7 +35,7 @@ jobs:
     if: startsWith(github.event.comment.body, '/devin')
     runs-on: ubuntu-24.04
     steps:
-      - uses: knanao/devin-action@44f84b6cd58d3dea5f25af49593369edb5984665 #v0.4.0
+      - uses: knanao/devin-action@a5a36f444928c9d429de5c0248a6c891931eb542 #v0.5.0
         with:
           devin-api-key: ${{ secrets.DEVIN_API_KEY }}
           devin-org-id: ${{ secrets.DEVIN_ORG_ID }}
@@ -46,12 +46,3 @@ jobs:
           session-reuse: 'true'
           report: 'true'
           api-version: 'v1'
-          additional-instructions: |
-            UI-related fixes only:
-            1. Before applying the fix, checkout the base ref and reproduce the bug
-               using Computer Use in Chrome. Record it as `before.mp4`.
-            2. Apply the fix, run the same flow, and record it as `after.mp4`.
-            3. Post a PR comment via the GitHub App containing both recordings as proof of task completion.
-               Prefer uploading to GitHub (drag-and-drop asset URL under
-               `github.com/<owner>/<repo>/assets/...`) so reviewers without a
-               Devin account can view them inline.
