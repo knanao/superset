@@ -60,6 +60,25 @@ export const formatPermissionLabel = (
   viewMenuName: string,
 ) => `${permissionName.replace(/_/g, ' ')} ${viewMenuName.replace(/_/g, ' ')}`;
 
+// Permission labels are display-formatted (underscores rendered as spaces),
+// while stored identifiers keep underscores (e.g. `data_prod`). Normalize both
+// the search input and the candidate label to the same form so filtering works
+// regardless of whether the user types underscores or spaces.
+const normalizePermissionSearch = (value: string) =>
+  value.trim().toLowerCase().replace(/_/g, ' ');
+
+export const filterPermissionOption = (
+  search: string,
+  option?: { label?: unknown },
+): boolean => {
+  const normalizedSearch = normalizePermissionSearch(search);
+  if (!normalizedSearch) {
+    return true;
+  }
+  const label = typeof option?.label === 'string' ? option.label : '';
+  return normalizePermissionSearch(label).includes(normalizedSearch);
+};
+
 type PermissionResult = {
   id: number;
   permission: { name: string };
