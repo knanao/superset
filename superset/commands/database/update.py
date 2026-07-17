@@ -26,6 +26,7 @@ from flask_appbuilder.models.sqla import Model
 from superset import db
 from superset.commands.base import BaseCommand
 from superset.commands.database.exceptions import (
+    DatabaseConnectionFailedError,
     DatabaseExistsValidationError,
     DatabaseInvalidError,
     DatabaseNotFoundError,
@@ -89,12 +90,21 @@ class UpdateDatabaseCommand(BaseCommand):
         database = DatabaseDAO.update(self._model, self._properties)
         database.set_sqlalchemy_uri(database.sqlalchemy_uri)
 
-        new_catalog = database.get_default_catalog()
+        # Resolving the default catalog may require a live connection to the database.
+        # A metadata-only update (e.g. disabling ``expose_in_sqllab``) must succeed even
+        # when the database is unreachable, so a connection failure here should not
+        # abort the update; we simply skip the catalog/asset sync that depends on it.
+        try:
+            new_catalog = database.get_default_catalog()
+            connection_reachable = True
+        except Exception:
+            new_catalog = None
+            connection_reachable = False
 
         # update assets when the database catalog changes, if the database was not
         # configured with multi-catalog support; if it was enabled or is enabled in the
         # update we don't update the assets
-        if (
+        if connection_reachable and (
             force_update
             or new_catalog != original_catalog
             and not self._model.allow_multi_catalog
@@ -103,7 +113,9 @@ class UpdateDatabaseCommand(BaseCommand):
             self._update_catalog_attribute(self._model.id, new_catalog)
 
         # if the database name changed we need to update any existing permissions,
-        # since they're name based
+        # since they're name based. Syncing permissions requires a live connection, so
+        # a connection failure is tolerated here to allow metadata-only updates (such as
+        # disabling SQL Lab exposure) on databases that are no longer reachable.
         try:
             current_username = get_username()
             SyncPermissionsCommand(
@@ -114,6 +126,12 @@ class UpdateDatabaseCommand(BaseCommand):
             ).run()
         except (OAuth2RedirectError, MissingOAuth2TokenError):
             pass
+        except DatabaseConnectionFailedError:
+            logger.warning(
+                "Unable to sync permissions for database %s because the connection "
+                "failed; the metadata update was still applied.",
+                database.database_name,
+            )
 
         return database
 
