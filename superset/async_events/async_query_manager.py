@@ -269,7 +269,18 @@ class AsyncQueryManager:
             raise AsyncQueryTokenException("Token not preset")
 
         try:
-            return jwt.decode(token, self._jwt_secret, algorithms=["HS256"])["channel"]
+            # Only the ``channel`` claim is needed to resolve the async stream.
+            # Skip ``sub`` validation so that tokens carrying a non-string (or
+            # absent) subject - e.g. cookies minted by older builds that stored
+            # ``sub`` as ``None`` or an integer - still decode successfully
+            # instead of raising ``InvalidSubjectError`` and failing the
+            # embedded/async request with a 401.
+            return jwt.decode(
+                token,
+                self._jwt_secret,
+                algorithms=["HS256"],
+                options={"verify_sub": False},
+            )["channel"]
         except Exception as ex:
             logger.warning("Parse jwt failed", exc_info=True)
             raise AsyncQueryTokenException("Failed to parse token") from ex
