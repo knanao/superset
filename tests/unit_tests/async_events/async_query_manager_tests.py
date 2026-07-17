@@ -276,7 +276,13 @@ def test_submit_chart_data_job_as_guest_user(
 
 
 def test_parse_channel_id_from_request_sub_none(async_query_manager):
-    """Regression: token with sub=None must not break parse (PyJWT 2.10.1+)."""
+    """Regression: a token with sub=None still resolves its channel.
+
+    PyJWT 2.10+ raises ``InvalidSubjectError`` when the ``sub`` claim is not a
+    string. Legacy cookies minted by older Superset builds stored ``sub`` as
+    ``None`` for guest/anonymous users, so the decode path must ignore subject
+    validation and return the ``channel`` claim instead of failing the request.
+    """
     encoded_token = encode(
         {"channel": "test_channel_id", "sub": None},
         JWT_TOKEN_SECRET,
@@ -286,8 +292,29 @@ def test_parse_channel_id_from_request_sub_none(async_query_manager):
     request = Mock()
     request.cookies = {JWT_TOKEN_COOKIE_NAME: encoded_token}
 
-    with raises(AsyncQueryTokenException):
-        async_query_manager.parse_channel_id_from_request(request)
+    assert (
+        async_query_manager.parse_channel_id_from_request(request) == "test_channel_id"
+    )
+
+
+def test_parse_channel_id_from_request_sub_non_string(async_query_manager):
+    """Regression: a token with a non-string (integer) sub still resolves.
+
+    Older builds emitted ``sub`` as the integer user id; such in-flight cookies
+    must not raise ``InvalidSubjectError`` during embedded/async rendering.
+    """
+    encoded_token = encode(
+        {"channel": "test_channel_id", "sub": 42},
+        JWT_TOKEN_SECRET,
+        algorithm="HS256",
+    )
+
+    request = Mock()
+    request.cookies = {JWT_TOKEN_COOKIE_NAME: encoded_token}
+
+    assert (
+        async_query_manager.parse_channel_id_from_request(request) == "test_channel_id"
+    )
 
 
 def test_validate_session_guest_user_creates_valid_token(async_query_manager):
