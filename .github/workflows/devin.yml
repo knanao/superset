@@ -1,0 +1,57 @@
+name: Devin
+
+# Starts a Devin session when a repo insider posts `/devin <prompt>` on an
+# issue, PR, or PR review comment. See https://github.com/knanao/devin-action.
+#
+# Required repository secrets:
+#   DEVIN_API_KEY  Devin service-user API key (cog_*)
+#   DEVIN_ORG_ID   Devin organization id (org_*)
+#
+# The Devin GitHub App must also be installed on this repository so that Devin
+# can read/write issues and PRs on its own; this workflow never hands a GitHub
+# token to Devin.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+# Serialize by PR/Issue thread. Devin's session-reuse looks up the live session
+# for a thread and appends a follow-up; two concurrent /devin comments on the
+# same thread would otherwise race that lookup. cancel-in-progress: false
+# because we must never abandon a Devin session mid-request.
+concurrency:
+  group: devin-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  devin:
+    if: startsWith(github.event.comment.body, '/devin')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: knanao/devin-action@44f84b6cd58d3dea5f25af49593369edb5984665 #v0.4.0
+        with:
+          devin-api-key: ${{ secrets.DEVIN_API_KEY }}
+          devin-org-id: ${{ secrets.DEVIN_ORG_ID }}
+          # Public repo: restrict triggers to repo insiders. The action defaults
+          # to this list, but pinning it explicitly prevents a future default
+          # change from silently widening who can spend Devin ACUs.
+          allowed-associations: 'OWNER,MEMBER,COLLABORATOR'
+          session-reuse: 'true'
+          report: 'true'
+          api-version: 'v1'
+          additional-instructions: |
+            UI-related fixes only:
+            1. Before applying the fix, checkout the base ref and reproduce the bug
+               using Computer Use in Chrome. Record it as `before.mp4`.
+            2. Apply the fix, run the same flow, and record it as `after.mp4`.
+            3. Post a PR comment via the GitHub App containing both recordings as proof of task completion.
+               Prefer uploading to GitHub (drag-and-drop asset URL under
+               `github.com/<owner>/<repo>/assets/...`) so reviewers without a
+               Devin account can view them inline.
