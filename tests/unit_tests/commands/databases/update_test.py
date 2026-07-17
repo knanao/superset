@@ -17,6 +17,7 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from pytest_mock import MockerFixture
 
 from superset import db
@@ -739,3 +740,37 @@ def test_update_metadata_on_unreachable_database_with_catalog(
     assert result is database
     # The catalog/asset sync depends on a live connection and must be skipped.
     update_catalog_attribute.assert_not_called()
+
+
+def test_update_connection_change_surfaces_connection_error(
+    mocker: MockerFixture,
+) -> None:
+    """
+    Test that a connection failure is still surfaced when the update actually changes
+    the connection details (as opposed to a metadata-only change).
+    """
+    old_database = mocker.MagicMock()
+    old_database.database_name = "my_db"
+    old_database.sqlalchemy_uri_decrypted = "postgresql://user:right@host/db"
+    old_database.id = 1
+
+    new_database = mocker.MagicMock()
+    new_database.database_name = "my_db"
+    # The connection URI (credentials) changed as part of this update.
+    new_database.sqlalchemy_uri_decrypted = "postgresql://user:wrong@host/db"
+
+    database_dao = mocker.patch("superset.commands.database.update.DatabaseDAO")
+    database_dao.find_by_id.return_value = old_database
+    database_dao.update.return_value = new_database
+
+    mocker.patch.object(UpdateDatabaseCommand, "validate")
+
+    sync_command = mocker.patch(
+        "superset.commands.database.update.SyncPermissionsCommand"
+    )
+    sync_command.return_value.run.side_effect = DatabaseConnectionFailedError()
+
+    with pytest.raises(DatabaseConnectionFailedError):
+        UpdateDatabaseCommand(
+            1, {"sqlalchemy_uri": "postgresql://user:wrong@host/db"}
+        ).run()
