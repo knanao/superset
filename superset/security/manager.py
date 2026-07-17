@@ -504,9 +504,18 @@ class SupersetPermissionViewMenuApi(PermissionViewMenuApi):
     or view_menu.name. FAB's Filters.__init__ cannot auto-detect filters
     for dotted relationship columns, so we inject them manually after the
     parent initialises the Filters object.
+
+    It also defines a stable ``base_order`` on the primary key. FAB only
+    applies an ``ORDER BY`` when the request specifies an order column or the
+    view/API declares a ``base_order``; without one, paginated responses fall
+    back to the database's arbitrary row order, so the same permission row can
+    surface on more than one page (or be skipped) once the permission set
+    grows large enough to span multiple pages. Ordering by the unique primary
+    key guarantees each row appears exactly once across page boundaries.
     """
 
     search_columns = ["id"]
+    base_order = ("id", "asc")
 
     _custom_pvm_filters: dict[str, list[type[BaseFilter]]] = {
         "permission.name": [_FilterPermissionNameContains],
