@@ -350,6 +350,88 @@ def test_execute_allowed_functions(
     assert result.status == QueryStatus.SUCCESS
 
 
+@pytest.fixture
+def mysql_database() -> Database:
+    """Create a test database instance backed by a MySQL-compatible engine."""
+    return Database(
+        id=3,
+        database_name="test_db_mysql",
+        sqlalchemy_uri="mysql://user:pass@localhost/test",
+        allow_dml=False,
+    )
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT metric_user_count FROM metrics",
+        "SELECT user_id AS user_alias FROM events",
+        "SELECT table_schema, table_name FROM information_schema.tables",
+        "SELECT * FROM information_schema.columns",
+    ],
+)
+def test_execute_identifiers_containing_disallowed_substrings(
+    mocker: MockerFixture, mysql_database: Database, app_context: None, sql: str
+) -> None:
+    """Identifiers that merely contain a disallowed function name are allowed."""
+    mock_query_execution(
+        mocker, mysql_database, return_data=[(1,)], column_names=["id"]
+    )
+    mocker.patch.object(
+        mysql_database, "resolve_query_default_schema", return_value=None
+    )
+    mocker.patch.dict(
+        current_app.config,
+        {
+            "SQL_QUERY_MUTATOR": None,
+            "SQLLAB_TIMEOUT": 30,
+            "SQL_MAX_ROW": None,
+            "DISALLOWED_SQL_FUNCTIONS": {"mysql": {"USER", "SCHEMA"}},
+            "DISALLOWED_SQL_TABLES": {},
+            "QUERY_LOGGER": None,
+        },
+    )
+
+    result = mysql_database.execute(sql)
+
+    assert result.status == QueryStatus.SUCCESS
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected_function"),
+    [
+        ("SELECT USER()", "USER"),
+        ("SELECT SCHEMA()", "SCHEMA"),
+    ],
+)
+def test_execute_real_disallowed_function_calls_rejected(
+    mocker: MockerFixture,
+    mysql_database: Database,
+    app_context: None,
+    sql: str,
+    expected_function: str,
+) -> None:
+    """Actual disallowed function calls are still rejected."""
+    mocker.patch.object(
+        mysql_database, "resolve_query_default_schema", return_value=None
+    )
+    mocker.patch.dict(
+        current_app.config,
+        {
+            "SQL_QUERY_MUTATOR": None,
+            "SQLLAB_TIMEOUT": 30,
+            "DISALLOWED_SQL_FUNCTIONS": {"mysql": {"USER", "SCHEMA"}},
+        },
+    )
+
+    result = mysql_database.execute(sql)
+
+    assert result.status == QueryStatus.FAILED
+    assert result.error_message is not None
+    assert "Disallowed SQL functions" in result.error_message
+    assert expected_function in result.error_message
+
+
 def test_execute_disallowed_tables(
     mocker: MockerFixture, database: Database, app_context: None
 ) -> None:

@@ -704,14 +704,14 @@ class SQLExecutor:
         if not engine_disallowed:
             return None
 
-        # Check each statement for disallowed functions
-        found = set()
-        for statement in script.statements:
-            # Use the statement's AST to check for function calls
-            statement_str = str(statement).upper()
-            for func in engine_disallowed:
-                if func.upper() in statement_str:
-                    found.add(func)
+        # Use AST-based function detection so only real function-call nodes are
+        # flagged. Substring matching on the raw SQL text produces false
+        # positives for identifiers (columns, tables, schemas, aliases) that
+        # merely contain a disallowed function name, e.g. ``metric_user_count``,
+        # ``information_schema`` or ``table_schema``.
+        found = {
+            func for func in engine_disallowed if script.check_functions_present({func})
+        }
 
         return found if found else None
 
