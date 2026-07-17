@@ -278,6 +278,69 @@ def test_catalog_cache() -> None:
     assert database.catalog_cache_timeout == 10
 
 
+@pytest.mark.parametrize(
+    "stored,expected",
+    [
+        (600, 600),
+        (0, 0),
+        ("600", 600),
+        ("", None),
+        (None, None),
+        (-1, None),
+        (True, None),
+        ("abc", None),
+    ],
+)
+def test_metadata_cache_timeout_normalization(
+    stored: Any, expected: int | None
+) -> None:
+    """
+    Blank or malformed cache timeout values must be normalized to ``None`` so
+    they are treated as unset instead of crashing the caching layer with
+    ``value is not an integer or out of range``.
+    """
+    database = Database(
+        database_name="db",
+        sqlalchemy_uri="sqlite://",
+        extra=json.dumps(
+            {
+                "metadata_cache_timeout": {
+                    "schema_cache_timeout": stored,
+                    "table_cache_timeout": stored,
+                    "catalog_cache_timeout": stored,
+                }
+            }
+        ),
+    )
+
+    assert database.schema_cache_timeout == expected
+    assert database.table_cache_timeout == expected
+    assert database.catalog_cache_timeout == expected
+    # The keys are present, so the caches are considered enabled regardless of
+    # the (normalized) timeout value.
+    assert database.schema_cache_enabled
+    assert database.table_cache_enabled
+    assert database.catalog_cache_enabled
+
+
+def test_metadata_cache_timeout_unset() -> None:
+    """
+    When the timeout keys are absent the caches are disabled and timeouts unset.
+    """
+    database = Database(
+        database_name="db",
+        sqlalchemy_uri="sqlite://",
+        extra=json.dumps({"metadata_cache_timeout": {}}),
+    )
+
+    assert database.schema_cache_timeout is None
+    assert database.table_cache_timeout is None
+    assert database.catalog_cache_timeout is None
+    assert not database.schema_cache_enabled
+    assert not database.table_cache_enabled
+    assert not database.catalog_cache_enabled
+
+
 def test_get_default_catalog() -> None:
     """
     Test the `get_default_catalog` method.

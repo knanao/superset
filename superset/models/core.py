@@ -373,13 +373,35 @@ class Database(CoreDatabase, AuditMixinNullable, ImportExportMixin):  # pylint: 
     def metadata_cache_timeout(self) -> dict[str, Any]:
         return self.get_extra().get("metadata_cache_timeout", {})
 
+    def _metadata_cache_timeout(self, key: str) -> int | None:
+        """
+        Return a metadata cache timeout as a non-negative integer, or ``None``
+        when the stored value is missing, blank, or otherwise not a valid
+        timeout.
+
+        The database ``extra`` payload can contain blank or malformed timeout
+        values (for example when saved before validation was added, imported,
+        or edited directly in the metadata database). Such values are normalized
+        to ``None`` here so they are treated as "unset" rather than flowing into
+        the caching layer, where a non-integer timeout raises ``value is not an
+        integer or out of range``.
+        """
+        timeout = self.metadata_cache_timeout.get(key)
+        if isinstance(timeout, bool) or timeout is None:
+            return None
+        try:
+            timeout = int(timeout)
+        except (TypeError, ValueError):
+            return None
+        return timeout if timeout >= 0 else None
+
     @property
     def catalog_cache_enabled(self) -> bool:
         return "catalog_cache_timeout" in self.metadata_cache_timeout
 
     @property
     def catalog_cache_timeout(self) -> int | None:
-        return self.metadata_cache_timeout.get("catalog_cache_timeout")
+        return self._metadata_cache_timeout("catalog_cache_timeout")
 
     @property
     def schema_cache_enabled(self) -> bool:
@@ -387,7 +409,7 @@ class Database(CoreDatabase, AuditMixinNullable, ImportExportMixin):  # pylint: 
 
     @property
     def schema_cache_timeout(self) -> int | None:
-        return self.metadata_cache_timeout.get("schema_cache_timeout")
+        return self._metadata_cache_timeout("schema_cache_timeout")
 
     @property
     def table_cache_enabled(self) -> bool:
@@ -395,7 +417,7 @@ class Database(CoreDatabase, AuditMixinNullable, ImportExportMixin):  # pylint: 
 
     @property
     def table_cache_timeout(self) -> int | None:
-        return self.metadata_cache_timeout.get("table_cache_timeout")
+        return self._metadata_cache_timeout("table_cache_timeout")
 
     @property
     def default_schemas(self) -> list[str]:
