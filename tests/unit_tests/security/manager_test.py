@@ -50,6 +50,39 @@ def test_security_manager(app_context: None) -> None:
     assert sm
 
 
+def _get_baseview(class_name: str) -> Any:
+    """Return the registered FAB view/API instance for ``class_name``."""
+    for view in appbuilder.baseviews:
+        if type(view).__name__ == class_name:
+            return view
+    return None
+
+
+def test_permissions_resources_api_has_stable_default_order(
+    app_context: None,
+) -> None:
+    """
+    Regression test for duplicate permissions across paginated pages.
+
+    The permissions listing (``/api/v1/security/permissions-resources/``) must
+    resolve to a deterministic ``ORDER BY`` even when the client sends no order
+    argument. FAB only emits an ``ORDER BY`` when the request specifies an order
+    column or the API declares a ``base_order``; without one the database is
+    free to return rows in an arbitrary order that varies between page
+    requests, so the same permission row can appear on more than one page (or
+    be skipped) once the permission set grows large enough to paginate.
+    """
+    api = _get_baseview("SupersetPermissionViewMenuApi")
+    assert api is not None
+    assert api.base_order == ("id", "asc")
+
+    # With no order args, FAB falls back to base_order -> stable pagination.
+    assert api._handle_order_args({}) == ("id", "asc")
+
+    # Clients (e.g. the roles UI dropdown) can still explicitly order by id.
+    assert "id" in api.order_columns
+
+
 @pytest.fixture
 def stored_metrics() -> list[AdhocMetric]:
     """
