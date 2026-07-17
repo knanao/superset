@@ -20,7 +20,11 @@ import { useCallback } from 'react';
 import { FormItem, Input, AsyncSelect } from '@superset-ui/core/components';
 import { t } from '@apache-superset/core/translation';
 import { fetchUserOptions } from '../groups/utils';
-import { fetchGroupOptions, fetchPermissionOptions } from './utils';
+import {
+  fetchGroupOptions,
+  fetchPermissionOptions,
+  filterPermissionOption,
+} from './utils';
 
 interface AsyncOptionsFieldProps {
   addDangerToast: (msg: string) => void;
@@ -60,6 +64,7 @@ export const PermissionsField = ({
         placeholder={t('Select permissions')}
         options={options}
         loading={loading}
+        filterOption={filterPermissionOption}
         getPopupContainer={trigger => trigger.closest('.ant-modal-content')}
         data-test="permissions-select"
       />

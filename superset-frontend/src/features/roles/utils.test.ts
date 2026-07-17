@@ -22,6 +22,8 @@ import {
   clearPermissionSearchCache,
   fetchGroupOptions,
   fetchPermissionOptions,
+  filterPermissionOption,
+  formatPermissionLabel,
 } from './utils';
 
 const getMock = jest.spyOn(SupersetClient, 'get');
@@ -554,4 +556,37 @@ test('fetchPermissionOptions normalizes whitespace and case for cache keys', asy
   // " Dataset " (leading + trailing space) — same normalized key, cache hit
   await fetchPermissionOptions(' Dataset ', 0, 50, addDangerToast);
   expect(getMock).not.toHaveBeenCalled();
+});
+
+test('filterPermissionOption matches underscore searches against formatted labels', () => {
+  // Label is display-formatted: underscores rendered as spaces.
+  const label = formatPermissionLabel('can_read', 'schema_data_prod');
+  expect(label).toBe('can read schema data prod');
+  const option = { value: 1, label };
+
+  // Searching with the canonical underscore identifier matches
+  expect(filterPermissionOption('data_prod', option)).toBe(true);
+  // Searching with the space-normalized display value also matches
+  expect(filterPermissionOption('data prod', option)).toBe(true);
+  // Case-insensitive and whitespace-tolerant
+  expect(filterPermissionOption('  DATA_PROD ', option)).toBe(true);
+  // Non-matching search is excluded
+  expect(filterPermissionOption('other_schema', option)).toBe(false);
+});
+
+test('filterPermissionOption does not regress labels without underscores', () => {
+  const option = {
+    value: 2,
+    label: formatPermissionLabel('can read', 'Chart'),
+  };
+  expect(filterPermissionOption('chart', option)).toBe(true);
+  expect(filterPermissionOption('can read', option)).toBe(true);
+  expect(filterPermissionOption('dashboard', option)).toBe(false);
+});
+
+test('filterPermissionOption returns all options for empty search', () => {
+  const option = { value: 3, label: 'can read schema data prod' };
+  expect(filterPermissionOption('', option)).toBe(true);
+  expect(filterPermissionOption('   ', option)).toBe(true);
+  expect(filterPermissionOption('data_prod', undefined)).toBe(false);
 });
