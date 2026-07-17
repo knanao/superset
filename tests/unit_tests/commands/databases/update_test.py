@@ -17,9 +17,11 @@
 
 from unittest.mock import MagicMock
 
+import pytest
 from pytest_mock import MockerFixture
 
 from superset import db
+from superset.commands.database.exceptions import DatabaseConnectionFailedError
 from superset.commands.database.update import UpdateDatabaseCommand
 from superset.extensions import security_manager
 from superset.utils import json
@@ -667,3 +669,108 @@ def test_update_broken_connection(mocker: MockerFixture) -> None:
     UpdateDatabaseCommand(1, {}).run()
 
     update_catalog_attribute.assert_called_once_with(1, "main")
+
+
+def test_update_metadata_on_unreachable_database(mocker: MockerFixture) -> None:
+    """
+    Test that a metadata-only update (e.g. disabling ``expose_in_sqllab``) succeeds
+    even when the database is unreachable and syncing permissions fails.
+
+    Regression test for being unable to disable SQL Lab exposure on a database that
+    is no longer reachable.
+    """
+    database = mocker.MagicMock()
+    database.database_name = "unreachable_db"
+    database.id = 1
+
+    database_dao = mocker.patch("superset.commands.database.update.DatabaseDAO")
+    database_dao.find_by_id.return_value = database
+    database_dao.update.return_value = database
+
+    mocker.patch.object(UpdateDatabaseCommand, "validate")
+    update_catalog_attribute = mocker.patch.object(
+        UpdateDatabaseCommand,
+        "_update_catalog_attribute",
+    )
+
+    # Simulate an unreachable database: syncing permissions requires a live
+    # connection and therefore raises a connection error.
+    sync_command = mocker.patch(
+        "superset.commands.database.update.SyncPermissionsCommand"
+    )
+    sync_command.return_value.run.side_effect = DatabaseConnectionFailedError()
+
+    result = UpdateDatabaseCommand(1, {"expose_in_sqllab": False}).run()
+
+    assert result is database
+    database_dao.update.assert_called_once_with(database, {"expose_in_sqllab": False})
+    update_catalog_attribute.assert_not_called()
+
+
+def test_update_metadata_on_unreachable_database_with_catalog(
+    mocker: MockerFixture,
+) -> None:
+    """
+    Test that a metadata-only update succeeds on an unreachable database whose engine
+    resolves the default catalog through a live query (which fails when unreachable).
+    """
+    database = mocker.MagicMock()
+    database.database_name = "unreachable_db"
+    database.id = 1
+    # Resolving the default catalog requires a live connection, which fails.
+    database.get_default_catalog.side_effect = Exception("Broken connection")
+
+    database_dao = mocker.patch("superset.commands.database.update.DatabaseDAO")
+    database_dao.find_by_id.return_value = database
+    database_dao.update.return_value = database
+
+    mocker.patch.object(UpdateDatabaseCommand, "validate")
+    update_catalog_attribute = mocker.patch.object(
+        UpdateDatabaseCommand,
+        "_update_catalog_attribute",
+    )
+
+    sync_command = mocker.patch(
+        "superset.commands.database.update.SyncPermissionsCommand"
+    )
+    sync_command.return_value.run.side_effect = DatabaseConnectionFailedError()
+
+    result = UpdateDatabaseCommand(1, {"expose_in_sqllab": False}).run()
+
+    assert result is database
+    # The catalog/asset sync depends on a live connection and must be skipped.
+    update_catalog_attribute.assert_not_called()
+
+
+def test_update_connection_change_surfaces_connection_error(
+    mocker: MockerFixture,
+) -> None:
+    """
+    Test that a connection failure is still surfaced when the update actually changes
+    the connection details (as opposed to a metadata-only change).
+    """
+    old_database = mocker.MagicMock()
+    old_database.database_name = "my_db"
+    old_database.sqlalchemy_uri_decrypted = "postgresql://user:right@host/db"
+    old_database.id = 1
+
+    new_database = mocker.MagicMock()
+    new_database.database_name = "my_db"
+    # The connection URI (credentials) changed as part of this update.
+    new_database.sqlalchemy_uri_decrypted = "postgresql://user:wrong@host/db"
+
+    database_dao = mocker.patch("superset.commands.database.update.DatabaseDAO")
+    database_dao.find_by_id.return_value = old_database
+    database_dao.update.return_value = new_database
+
+    mocker.patch.object(UpdateDatabaseCommand, "validate")
+
+    sync_command = mocker.patch(
+        "superset.commands.database.update.SyncPermissionsCommand"
+    )
+    sync_command.return_value.run.side_effect = DatabaseConnectionFailedError()
+
+    with pytest.raises(DatabaseConnectionFailedError):
+        UpdateDatabaseCommand(
+            1, {"sqlalchemy_uri": "postgresql://user:wrong@host/db"}
+        ).run()

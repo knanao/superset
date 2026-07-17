@@ -26,6 +26,7 @@ from flask_appbuilder.models.sqla import Model
 from superset import db
 from superset.commands.base import BaseCommand
 from superset.commands.database.exceptions import (
+    DatabaseConnectionFailedError,
     DatabaseExistsValidationError,
     DatabaseInvalidError,
     DatabaseNotFoundError,
@@ -78,6 +79,7 @@ class UpdateDatabaseCommand(BaseCommand):
         # `get_default_catalog` would raise an exception. We need to
         # gracefully handle that so that the connection can be fixed.
         original_database_name = self._model.database_name
+        original_connection = self._connection_fingerprint(self._model)
         force_update: bool = False
         try:
             original_catalog = self._model.get_default_catalog()
@@ -89,12 +91,30 @@ class UpdateDatabaseCommand(BaseCommand):
         database = DatabaseDAO.update(self._model, self._properties)
         database.set_sqlalchemy_uri(database.sqlalchemy_uri)
 
-        new_catalog = database.get_default_catalog()
+        # Whether the connection details (URI, credentials, etc.) changed in this
+        # update. When they didn't, the change is metadata-only (e.g. disabling
+        # ``expose_in_sqllab``) and must succeed even if the database is unreachable,
+        # so connection failures in the catalog/permission sync below are tolerated.
+        connection_changed = original_connection != self._connection_fingerprint(
+            database
+        )
+
+        # Resolving the default catalog may require a live connection. If it fails we
+        # skip the catalog/asset sync that depends on it rather than aborting a
+        # metadata-only update.
+        try:
+            new_catalog = database.get_default_catalog()
+            connection_reachable = True
+        except Exception:
+            if connection_changed:
+                raise
+            new_catalog = None
+            connection_reachable = False
 
         # update assets when the database catalog changes, if the database was not
         # configured with multi-catalog support; if it was enabled or is enabled in the
         # update we don't update the assets
-        if (
+        if connection_reachable and (
             force_update
             or new_catalog != original_catalog
             and not self._model.allow_multi_catalog
@@ -103,7 +123,10 @@ class UpdateDatabaseCommand(BaseCommand):
             self._update_catalog_attribute(self._model.id, new_catalog)
 
         # if the database name changed we need to update any existing permissions,
-        # since they're name based
+        # since they're name based. Syncing permissions requires a live connection; a
+        # connection failure is tolerated for metadata-only updates (e.g. disabling SQL
+        # Lab exposure) on unreachable databases, but is surfaced when the update is
+        # actually changing the connection details.
         try:
             current_username = get_username()
             SyncPermissionsCommand(
@@ -114,8 +137,32 @@ class UpdateDatabaseCommand(BaseCommand):
             ).run()
         except (OAuth2RedirectError, MissingOAuth2TokenError):
             pass
+        except DatabaseConnectionFailedError:
+            if connection_changed:
+                raise
+            logger.warning(
+                "Unable to sync permissions for database %s because the connection "
+                "failed; the metadata update was still applied.",
+                database.database_name,
+            )
 
         return database
+
+    @staticmethod
+    def _connection_fingerprint(database: Database) -> tuple[Any, ...]:
+        """
+        Return a snapshot of the connection-defining attributes of a database.
+
+        Used to detect whether an update actually changed how Superset connects to
+        the database, as opposed to a metadata-only change.
+        """
+        return (
+            database.sqlalchemy_uri_decrypted,
+            database.encrypted_extra,
+            database.extra,
+            database.impersonate_user,
+            database.server_cert,
+        )
 
     def _handle_oauth2(self) -> None:
         """
